@@ -183,58 +183,60 @@ export default function Dashboard() {
 
         <div className="grid gap-4">
           {campaigns.map((campaign) => (
-            <Card key={campaign.id}>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center space-x-3">
-                      <h3 className="text-lg font-semibold">{campaign.name}</h3>
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(campaign.status)} bg-slate-100`}>
-                        {campaign.status}
-                      </span>
-                      <span className="px-2 py-1 rounded-full text-xs font-medium bg-slate-100">
-                        {strategies.find(s => s.value === campaign.strategy)?.label}
-                      </span>
+            <Link key={campaign.id} href={`/campaigns/${campaign.id}`}>
+              <Card className="cursor-pointer hover:shadow-md transition-shadow">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-3">
+                        <h3 className="text-lg font-semibold">{campaign.name}</h3>
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(campaign.status)} bg-slate-100`}>
+                          {campaign.status}
+                        </span>
+                        <span className="px-2 py-1 rounded-full text-xs font-medium bg-slate-100">
+                          {strategies.find(s => s.value === campaign.strategy)?.label}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-500 mt-1 font-mono">
+                        {campaign.tokenMint.slice(0, 8)}...{campaign.tokenMint.slice(-8)}
+                      </p>
                     </div>
-                    <p className="text-sm text-slate-500 mt-1 font-mono">
-                      {campaign.tokenMint.slice(0, 8)}...{campaign.tokenMint.slice(-8)}
-                    </p>
-                  </div>
-                  <div className="flex items-center space-x-8">
-                    <div className="text-right">
-                      <p className="text-sm text-slate-500">Volume</p>
-                      <p className="text-lg font-semibold">{campaign.volume.toFixed(2)} SOL</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm text-slate-500">Tx Count</p>
-                      <p className="text-lg font-semibold">{campaign.txCount.toLocaleString()}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm text-slate-500">Makers</p>
-                      <p className="text-lg font-semibold">{campaign.makers}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm text-slate-500">Budget</p>
-                      <p className="text-lg font-semibold">{campaign.budgetUsed}%</p>
-                    </div>
-                    <div className="flex space-x-2">
-                      {campaign.status === 'running' ? (
-                        <Button variant="outline" size="icon">
-                          <Pause className="h-4 w-4" />
+                    <div className="flex items-center space-x-8">
+                      <div className="text-right">
+                        <p className="text-sm text-slate-500">Volume</p>
+                        <p className="text-lg font-semibold">{campaign.volume.toFixed(2)} SOL</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm text-slate-500">Tx Count</p>
+                        <p className="text-lg font-semibold">{campaign.txCount.toLocaleString()}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm text-slate-500">Makers</p>
+                        <p className="text-lg font-semibold">{campaign.makers}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm text-slate-500">Budget</p>
+                        <p className="text-lg font-semibold">{campaign.budgetUsed}%</p>
+                      </div>
+                      <div className="flex space-x-2">
+                        {campaign.status === 'running' ? (
+                          <Button variant="outline" size="icon" onClick={(e) => e.preventDefault()}>
+                            <Pause className="h-4 w-4" />
+                          </Button>
+                        ) : campaign.status === 'paused' ? (
+                          <Button variant="outline" size="icon" onClick={(e) => e.preventDefault()}>
+                            <Play className="h-4 w-4" />
+                          </Button>
+                        ) : null}
+                        <Button variant="outline" size="icon" onClick={(e) => e.preventDefault()}>
+                          <Square className="h-4 w-4 text-red-500" />
                         </Button>
-                      ) : campaign.status === 'paused' ? (
-                        <Button variant="outline" size="icon">
-                          <Play className="h-4 w-4" />
-                        </Button>
-                      ) : null}
-                      <Button variant="outline" size="icon">
-                        <Square className="h-4 w-4 text-red-500" />
-                      </Button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </Link>
           ))}
         </div>
 
