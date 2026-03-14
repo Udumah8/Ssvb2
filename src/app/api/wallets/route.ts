@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, createRateLimitMiddleware } from '@/utils/rateLimit';
 import { v4 as uuidv4 } from 'uuid';
+import { Keypair } from '@solana/web3.js';
+import bs58 from 'bs58';
 
 const rateLimitMiddleware = createRateLimitMiddleware({
   windowMs: 60000,
@@ -9,13 +11,21 @@ const rateLimitMiddleware = createRateLimitMiddleware({
 
 const wallets = new Map();
 
-function generateWalletAddress(): string {
-  const chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-  let address = '';
-  for (let i = 0; i < 44; i++) {
-    address += chars.charAt(Math.floor(Math.random() * chars.length));
+function generateRealSolanaWallet(): { publicKey: string; privateKey: string } {
+  const keypair = Keypair.generate();
+  return {
+    publicKey: keypair.publicKey.toBase58(),
+    privateKey: bs58.encode(keypair.secretKey),
+  };
+}
+
+function isValidSolanaAddress(address: string): boolean {
+  try {
+    const decoded = bs58.decode(address);
+    return decoded.length === 32;
+  } catch {
+    return false;
   }
-  return address;
 }
 
 export async function GET(request: NextRequest) {
@@ -42,7 +52,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { action, count, walletId, masterWallet } = body;
+    const { action, count, walletId, masterWallet, privateKey } = body;
 
     switch (action) {
       case 'generate': {
@@ -50,10 +60,11 @@ export async function POST(request: NextRequest) {
         const newWallets = [];
 
         for (let i = 0; i < walletCount; i++) {
+          const { publicKey, privateKey: privKey } = generateRealSolanaWallet();
           const wallet = {
             id: uuidv4(),
-            publicKey: generateWalletAddress(),
-            privateKeyEncrypted: 'encrypted_' + uuidv4(),
+            publicKey,
+            privateKeyEncrypted: privKey,
             balance: 0,
             isActive: true,
             createdAt: new Date().toISOString(),
@@ -65,10 +76,80 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ wallets: newWallets }, { status: 201 });
       }
 
+      case 'import': {
+        if (!privateKey) {
+          return NextResponse.json(
+            { error: 'Missing private key' },
+            { status: 400 }
+          );
+        }
+
+        let publicKey: string;
+        let privateKeyToStore: string;
+
+        if (privateKey.length === 64) {
+          const keypair = Keypair.fromSecretKey(
+            new Uint8Array(Buffer.from(privateKey, 'hex'))
+          );
+          publicKey = keypair.publicKey.toBase58();
+          privateKeyToStore = privateKey;
+        } else if (isValidSolanaAddress(privateKey)) {
+          return NextResponse.json(
+            { error: 'Please provide a private key, not a public address' },
+            { status: 400 }
+          );
+        } else {
+          try {
+            const decoded = bs58.decode(privateKey);
+            if (decoded.length !== 32) {
+              throw new Error('Invalid key length');
+            }
+            const keypair = Keypair.fromSecretKey(decoded);
+            publicKey = keypair.publicKey.toBase58();
+            privateKeyToStore = privateKey;
+          } catch {
+            return NextResponse.json(
+              { error: 'Invalid private key format' },
+              { status: 400 }
+            );
+          }
+        }
+
+        const existingWallet = Array.from(wallets.values()).find(
+          (w: { publicKey: string }) => w.publicKey === publicKey
+        );
+
+        if (existingWallet) {
+          return NextResponse.json(
+            { error: 'Wallet already imported', wallet: existingWallet },
+            { status: 409 }
+          );
+        }
+
+        const wallet = {
+          id: uuidv4(),
+          publicKey,
+          privateKeyEncrypted: privateKeyToStore,
+          balance: 0,
+          isActive: true,
+          createdAt: new Date().toISOString(),
+        };
+        wallets.set(wallet.id, wallet);
+
+        return NextResponse.json({ wallet }, { status: 201 });
+      }
+
       case 'fund': {
         if (!masterWallet || !walletId) {
           return NextResponse.json(
             { error: 'Missing masterWallet or walletId' },
+            { status: 400 }
+          );
+        }
+
+        if (!isValidSolanaAddress(masterWallet)) {
+          return NextResponse.json(
+            { error: 'Invalid master wallet address' },
             { status: 400 }
           );
         }
@@ -95,6 +176,13 @@ export async function POST(request: NextRequest) {
           );
         }
 
+        if (!isValidSolanaAddress(masterWallet)) {
+          return NextResponse.json(
+            { error: 'Invalid master wallet address' },
+            { status: 400 }
+          );
+        }
+
         let totalRecovered = 0;
         const recoveredWallets = [];
 
@@ -117,11 +205,12 @@ export async function POST(request: NextRequest) {
 
       default:
         return NextResponse.json(
-          { error: 'Invalid action. Use: generate, fund, or recover' },
+          { error: 'Invalid action. Use: generate, import, fund, or recover' },
           { status: 400 }
         );
     }
   } catch (error) {
+    console.error('Wallet API error:', error);
     return NextResponse.json(
       { error: 'Failed to process wallet action' },
       { status: 500 }

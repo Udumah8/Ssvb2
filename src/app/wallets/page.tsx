@@ -20,7 +20,9 @@ import {
   EyeOff,
   Download,
   Upload,
-  AlertCircle
+  AlertCircle,
+  Key,
+  CheckCircle
 } from 'lucide-react';
 
 interface WalletInfo {
@@ -35,15 +37,19 @@ interface WalletInfo {
 export default function WalletsPage() {
   const [wallets, setWallets] = useState<WalletInfo[]>([]);
   const [showBalances, setShowBalances] = useState(false);
+  const [showPrivateKeys, setShowPrivateKeys] = useState<Record<string, boolean>>({});
   const [generating, setGenerating] = useState(false);
   const [distributing, setDistributing] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   
   const [masterWallet, setMasterWallet] = useState('');
   const [amountPerWallet, setAmountPerWallet] = useState('0.1');
   const [walletCount, setWalletCount] = useState('10');
+  const [importKey, setImportKey] = useState('');
 
   const fetchWallets = async () => {
     setLoading(true);
@@ -65,19 +71,50 @@ export default function WalletsPage() {
   const handleGenerateWallets = async () => {
     setGenerating(true);
     setError('');
+    setSuccess('');
     const count = parseInt(walletCount) || 10;
     const { data, error: err } = await walletApi.generate(count);
     if (err) {
       setError(err);
     } else if (data?.wallets) {
-      setWallets([...wallets, ...(data.wallets as WalletInfo[])]);
+      const newWallets = data.wallets as WalletInfo[];
+      setWallets([...wallets, ...newWallets]);
+      
+      const privateKeys = newWallets
+        .map(w => `${w.publicKey}: ${w.privateKeyEncrypted}`)
+        .join('\n');
+      
+      setSuccess(`Generated ${count} wallet(s)! Private keys:\n${privateKeys}\n\n⚠️ SAVE THESE PRIVATE KEYS - They are only shown once!`);
     }
     setGenerating(false);
-    fetchWallets();
+  };
+
+  const handleImportWallet = async () => {
+    if (!importKey.trim()) {
+      setError('Please enter a private key');
+      return;
+    }
+    setImporting(true);
+    setError('');
+    setSuccess('');
+    
+    const { data, error: err } = await walletApi.import(importKey.trim());
+    if (err) {
+      setError(err);
+    } else if (data?.wallet) {
+      setWallets([...wallets, data.wallet as WalletInfo]);
+      setSuccess('Wallet imported successfully!');
+      setImportKey('');
+    }
+    setImporting(false);
   };
 
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
+  };
+
+  const toggleShowPrivateKey = (walletId: string) => {
+    setShowPrivateKeys(prev => ({ ...prev, [walletId]: !prev[walletId] }));
   };
 
   const handleToggleActive = async (walletId: string, currentStatus: boolean) => {
@@ -130,10 +167,26 @@ export default function WalletsPage() {
     const { data, error: err } = await walletApi.recover(masterWallet);
     if (err) {
       setError(err);
+    } else if (data) {
+      setSuccess(`Recovered ${data.totalRecovered} SOL from wallets`);
     }
     
     setRecovering(false);
     fetchWallets();
+  };
+
+  const downloadWallets = () => {
+    const content = wallets
+      .map(w => `Public Key: ${w.publicKey}\nPrivate Key: ${w.privateKeyEncrypted}\n---`)
+      .join('\n');
+    
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'wallets.txt';
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const totalBalance = wallets.reduce((sum, w) => sum + w.balance, 0);
@@ -188,6 +241,13 @@ export default function WalletsPage() {
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center space-x-2 text-red-700">
             <AlertCircle className="h-5 w-5" />
             <span>{error}</span>
+          </div>
+        )}
+
+        {success && (
+          <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-start space-x-2 text-green-700">
+            <CheckCircle className="h-5 w-5 mt-0.5" />
+            <span className="whitespace-pre-wrap">{success}</span>
           </div>
         )}
 
@@ -253,8 +313,46 @@ export default function WalletsPage() {
               )}
               Generate Wallets
             </Button>
+            {wallets.length > 0 && (
+              <Button variant="outline" onClick={downloadWallets}>
+                <Download className="h-4 w-4 mr-2" />
+                Export Keys
+              </Button>
+            )}
           </div>
         </div>
+
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center">
+              <Key className="h-5 w-5 mr-2" />
+              Import Wallet
+            </CardTitle>
+            <CardDescription>
+              Import an existing Solana wallet using its private key
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-end gap-4 flex-wrap">
+              <div className="flex-1 min-w-[300px] space-y-2">
+                <Label>Private Key (base58 or hex)</Label>
+                <Input 
+                  placeholder="Enter private key"
+                  value={importKey}
+                  onChange={(e) => setImportKey(e.target.value)}
+                />
+              </div>
+              <Button onClick={handleImportWallet} disabled={importing || !importKey.trim()}>
+                {importing ? (
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Upload className="h-4 w-4 mr-2" />
+                )}
+                Import
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
@@ -278,9 +376,9 @@ export default function WalletsPage() {
               <div className="space-y-2">
                 <div className="grid grid-cols-12 gap-4 text-sm font-medium text-slate-500 px-4">
                   <div className="col-span-1">Status</div>
-                  <div className="col-span-6">Public Key</div>
-                  <div className="col-span-3">Balance</div>
-                  <div className="col-span-2">Actions</div>
+                  <div className="col-span-5">Public Key</div>
+                  <div className="col-span-2">Balance</div>
+                  <div className="col-span-4">Actions</div>
                 </div>
                 {wallets.map((wallet) => (
                   <div 
@@ -290,7 +388,7 @@ export default function WalletsPage() {
                     <div className="col-span-1">
                       <div className={`w-3 h-3 rounded-full ${wallet.isActive ? 'bg-green-500' : 'bg-slate-300'}`} />
                     </div>
-                    <div className="col-span-6 font-mono text-sm">
+                    <div className="col-span-5 font-mono text-sm">
                       {wallet.publicKey.slice(0, 12)}...{wallet.publicKey.slice(-12)}
                       <button 
                         onClick={() => handleCopy(wallet.publicKey)}
@@ -299,14 +397,22 @@ export default function WalletsPage() {
                         <Copy className="h-3 w-3 inline" />
                       </button>
                     </div>
-                    <div className="col-span-3">
+                    <div className="col-span-2">
                       {showBalances ? (
                         <span className="font-medium">{wallet.balance.toFixed(4)} SOL</span>
                       ) : (
                         <span className="text-slate-400">••••••</span>
                       )}
                     </div>
-                    <div className="col-span-2 flex space-x-2">
+                    <div className="col-span-4 flex space-x-2">
+                      <Button 
+                        variant="ghost" 
+                        size="icon"
+                        onClick={() => toggleShowPrivateKey(wallet.id)}
+                        title="Show private key"
+                      >
+                        <Key className={`h-4 w-4 ${showPrivateKeys[wallet.id] ? 'text-blue-500' : 'text-slate-400'}`} />
+                      </Button>
                       <Button 
                         variant="ghost" 
                         size="icon"
@@ -318,6 +424,22 @@ export default function WalletsPage() {
                         <Trash2 className="h-4 w-4 text-red-400 hover:text-red-600" />
                       </Button>
                     </div>
+                    {showPrivateKeys[wallet.id] && wallet.privateKeyEncrypted && (
+                      <div className="col-span-12 mt-2 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-xs text-yellow-800 break-all">
+                            {wallet.privateKeyEncrypted}
+                          </span>
+                          <button 
+                            onClick={() => handleCopy(wallet.privateKeyEncrypted!)}
+                            className="ml-2 text-yellow-600 hover:text-yellow-800"
+                          >
+                            <Copy className="h-4 w-4" />
+                          </button>
+                        </div>
+                        <p className="text-xs text-yellow-700 mt-1">⚠️ Save this private key - it won't be shown again!</p>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

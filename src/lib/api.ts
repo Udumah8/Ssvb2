@@ -91,6 +91,15 @@ export const walletApi = {
     return handleResponse<{ wallets: unknown[] }>(response);
   },
 
+  import: async (privateKey: string) => {
+    const response = await fetch(`${API_BASE}/wallets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'import', privateKey }),
+    });
+    return handleResponse<{ wallet: unknown }>(response);
+  },
+
   fund: async (walletId: string, masterWallet: string, amount: number) => {
     const response = await fetch(`${API_BASE}/wallets`, {
       method: 'POST',
