@@ -1,11 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { checkRateLimit, createRateLimitMiddleware } from '@/utils/rateLimit';
 import { v4 as uuidv4 } from 'uuid';
-
-const rateLimitMiddleware = createRateLimitMiddleware({
-  windowMs: 60000,
-  maxRequests: 50,
-});
 
 const alerts: Array<{
   id: string;
@@ -26,35 +20,34 @@ const alertConfigs: Map<string, Array<{
 }>> = new Map();
 
 export async function GET(request: NextRequest) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
+  try {
+    const url = new URL(request.url);
+    const campaignId = url.searchParams.get('campaignId');
 
-  const url = new URL(request.url);
-  const campaignId = url.searchParams.get('campaignId');
+    let filteredAlerts = alerts;
+    if (campaignId) {
+      filteredAlerts = alerts.filter(a => a.campaignId === campaignId);
+    }
 
-  let filteredAlerts = alerts;
-  if (campaignId) {
-    filteredAlerts = alerts.filter(a => a.campaignId === campaignId);
+    const stats = {
+      total: alerts.length,
+      byType: alerts.reduce((acc, alert) => {
+        acc[alert.type] = (acc[alert.type] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>),
+    };
+
+    return NextResponse.json({
+      alerts: filteredAlerts.reverse(),
+      stats,
+    });
+  } catch (error) {
+    console.error('GET error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
-
-  const stats = {
-    total: alerts.length,
-    byType: alerts.reduce((acc, alert) => {
-      acc[alert.type] = (acc[alert.type] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>),
-  };
-
-  return NextResponse.json({
-    alerts: filteredAlerts.reverse(),
-    stats,
-  });
 }
 
 export async function POST(request: NextRequest) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
-
   try {
     const body = await request.json();
     const { action, ...data } = body;
@@ -62,10 +55,7 @@ export async function POST(request: NextRequest) {
     switch (action) {
       case 'register-config': {
         if (!data.campaignId) {
-          return NextResponse.json(
-            { error: 'Missing campaignId' },
-            { status: 400 }
-          );
+          return NextResponse.json({ error: 'Missing campaignId' }, { status: 400 });
         }
 
         const config = {
@@ -85,10 +75,7 @@ export async function POST(request: NextRequest) {
 
       case 'remove-config': {
         if (!data.campaignId || !data.configId) {
-          return NextResponse.json(
-            { error: 'Missing campaignId or configId' },
-            { status: 400 }
-          );
+          return NextResponse.json({ error: 'Missing campaignId or configId' }, { status: 400 });
         }
 
         const configs = alertConfigs.get(data.campaignId) || [];
@@ -138,15 +125,10 @@ export async function POST(request: NextRequest) {
       }
 
       default:
-        return NextResponse.json(
-          { error: 'Invalid action' },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
   } catch (error) {
-    return NextResponse.json(
-      { error: 'Failed to process alert action' },
-      { status: 500 }
-    );
+    console.error('POST error:', error);
+    return NextResponse.json({ error: 'Failed to process alert action' }, { status: 500 });
   }
 }

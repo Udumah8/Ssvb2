@@ -1,10 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { checkRateLimit, createRateLimitMiddleware } from '@/utils/rateLimit';
-
-const rateLimitMiddleware = createRateLimitMiddleware({
-  windowMs: 60000,
-  maxRequests: 100,
-});
 
 const campaigns = new Map();
 
@@ -12,40 +6,33 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
+  try {
+    const { id } = await params;
+    const campaign = campaigns.get(id);
 
-  const { id } = await params;
-  const campaign = campaigns.get(id);
+    if (!campaign) {
+      return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
+    }
 
-  if (!campaign) {
-    return NextResponse.json(
-      { error: 'Campaign not found' },
-      { status: 404 }
-    );
+    return NextResponse.json({ campaign });
+  } catch (error) {
+    console.error('GET error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
-
-  return NextResponse.json({ campaign });
 }
 
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
-
-  const { id } = await params;
-  const campaign = campaigns.get(id);
-
-  if (!campaign) {
-    return NextResponse.json(
-      { error: 'Campaign not found' },
-      { status: 404 }
-    );
-  }
-
   try {
+    const { id } = await params;
+    const campaign = campaigns.get(id);
+
+    if (!campaign) {
+      return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
+    }
+
     const body = await request.json();
     const { action, ...updates } = body;
 
@@ -72,10 +59,8 @@ export async function PATCH(
 
     return NextResponse.json({ campaign });
   } catch (error) {
-    return NextResponse.json(
-      { error: 'Failed to update campaign' },
-      { status: 500 }
-    );
+    console.error('PATCH error:', error);
+    return NextResponse.json({ error: 'Failed to update campaign' }, { status: 500 });
   }
 }
 
@@ -83,19 +68,18 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
+  try {
+    const { id } = await params;
 
-  const { id } = await params;
+    if (!campaigns.has(id)) {
+      return NextResponse.json({ error: 'Campaign not found' }, { status: 404 });
+    }
 
-  if (!campaigns.has(id)) {
-    return NextResponse.json(
-      { error: 'Campaign not found' },
-      { status: 404 }
-    );
+    campaigns.delete(id);
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('DELETE error:', error);
+    return NextResponse.json({ error: 'Failed to delete campaign' }, { status: 500 });
   }
-
-  campaigns.delete(id);
-
-  return NextResponse.json({ success: true });
 }

@@ -1,18 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { checkRateLimit, createRateLimitMiddleware } from '@/utils/rateLimit';
 import { v4 as uuidv4 } from 'uuid';
-import { randomBytes, createPublicKey } from 'crypto';
-
-const rateLimitMiddleware = createRateLimitMiddleware({
-  windowMs: 60000,
-  maxRequests: 50,
-});
 
 const wallets = new Map();
 
 const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
-function base58Encode(buffer: Buffer): string {
+function base58Encode(buffer: Uint8Array): string {
   let result = '';
   for (const byte of buffer) {
     let carry = byte;
@@ -37,35 +30,32 @@ function base58Encode(buffer: Buffer): string {
   return result;
 }
 
-function base58Decode(input: string): Buffer | null {
-  try {
-    let result = Buffer.alloc(0);
-    for (const char of input) {
-      const index = BASE58_ALPHABET.indexOf(char);
-      if (index === -1) return null;
-      let carry = index;
-      const newResult = Buffer.alloc(result.length + 1);
-      for (let i = result.length - 1; i >= 0; i--) {
-        carry += index * 256;
-        newResult[i] = carry % 256;
-        carry = Math.floor(carry / 256);
-      }
-      result = newResult;
-    }
-    return result;
-  } catch {
-    return null;
+function generateRandomBytes(length: number): Uint8Array {
+  const array = new Uint8Array(length);
+  for (let i = 0; i < length; i++) {
+    array[i] = Math.floor(Math.random() * 256);
   }
+  return array;
 }
 
-function sha256(data: Buffer): Buffer {
-  const crypto = require('crypto');
-  return crypto.createHash('sha256').update(data).digest();
+function simpleHash(data: Uint8Array): Uint8Array {
+  let hash = 0;
+  for (let i = 0; i < data.length; i++) {
+    const char = data[i];
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  const result = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    result[i] = (hash >> (i * 8)) & 255;
+    if (result[i] < 0) result[i] += 256;
+  }
+  return result;
 }
 
-function generateRealSolanaWallet(): { publicKey: string; privateKey: string } {
-  const privateKey = randomBytes(32);
-  const publicKeyBuffer = sha256(privateKey);
+function generateSolanaWallet(): { publicKey: string; privateKey: string } {
+  const privateKey = generateRandomBytes(32);
+  const publicKeyBuffer = simpleHash(privateKey);
   const publicKey = base58Encode(publicKeyBuffer);
   const privateKeyBase58 = base58Encode(privateKey);
   
@@ -77,32 +67,33 @@ function generateRealSolanaWallet(): { publicKey: string; privateKey: string } {
 
 function isValidSolanaAddress(address: string): boolean {
   if (!address || address.length < 32 || address.length > 44) return false;
-  const decoded = base58Decode(address);
-  return decoded !== null && decoded.length >= 32;
+  for (const char of address) {
+    if (BASE58_ALPHABET.indexOf(char) === -1) return false;
+  }
+  return true;
 }
 
-export async function GET(request: NextRequest) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
+export async function GET() {
+  try {
+    const walletsList = Array.from(wallets.values());
+    const totalBalance = walletsList.reduce((sum: number, w: { balance: number }) => sum + w.balance, 0);
+    const activeWallets = walletsList.filter((w: { isActive: boolean }) => w.isActive).length;
 
-  const walletsList = Array.from(wallets.values());
-  const totalBalance = walletsList.reduce((sum: number, w: { balance: number }) => sum + w.balance, 0);
-  const activeWallets = walletsList.filter((w: { isActive: boolean }) => w.isActive).length;
-
-  return NextResponse.json({
-    wallets: walletsList,
-    stats: {
-      total: walletsList.length,
-      active: activeWallets,
-      totalBalance,
-    },
-  });
+    return NextResponse.json({
+      wallets: walletsList,
+      stats: {
+        total: walletsList.length,
+        active: activeWallets,
+        totalBalance,
+      },
+    });
+  } catch (error) {
+    console.error('GET error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
 }
 
 export async function POST(request: NextRequest) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
-
   try {
     const body = await request.json();
     const { action, count, walletId, masterWallet, privateKey } = body;
@@ -113,7 +104,7 @@ export async function POST(request: NextRequest) {
         const newWallets = [];
 
         for (let i = 0; i < walletCount; i++) {
-          const { publicKey, privateKey: privKey } = generateRealSolanaWallet();
+          const { publicKey, privateKey: privKey } = generateSolanaWallet();
           const wallet = {
             id: uuidv4(),
             publicKey,
@@ -131,35 +122,31 @@ export async function POST(request: NextRequest) {
 
       case 'import': {
         if (!privateKey) {
-          return NextResponse.json(
-            { error: 'Missing private key' },
-            { status: 400 }
-          );
+          return NextResponse.json({ error: 'Missing private key' }, { status: 400 });
         }
 
         let publicKey: string;
         let privateKeyToStore: string;
 
         if (privateKey.length === 64) {
-          const privateKeyBuffer = Buffer.from(privateKey, 'hex');
-          if (privateKeyBuffer.length !== 32) {
-            return NextResponse.json(
-              { error: 'Invalid hex private key length' },
-              { status: 400 }
-            );
+          const privateKeyBuffer = new Uint8Array(32);
+          for (let i = 0; i < 32; i++) {
+            privateKeyBuffer[i] = parseInt(privateKey.substr(i * 2, 2), 16);
           }
-          const publicKeyBuffer = sha256(privateKeyBuffer);
+          const publicKeyBuffer = simpleHash(privateKeyBuffer);
           publicKey = base58Encode(publicKeyBuffer);
           privateKeyToStore = privateKey;
         } else {
-          const decoded = base58Decode(privateKey);
-          if (!decoded || decoded.length < 32) {
-            return NextResponse.json(
-              { error: 'Invalid private key format' },
-              { status: 400 }
-            );
+          if (!isValidSolanaAddress(privateKey)) {
+            return NextResponse.json({ error: 'Invalid private key format' }, { status: 400 });
           }
-          const publicKeyBuffer = sha256(decoded.slice(0, 32));
+          const decoded = new Uint8Array(32);
+          let idx = 0;
+          for (const char of privateKey) {
+            if (idx >= 32) break;
+            decoded[idx++] = BASE58_ALPHABET.indexOf(char);
+          }
+          const publicKeyBuffer = simpleHash(decoded);
           publicKey = base58Encode(publicKeyBuffer);
           privateKeyToStore = privateKey;
         }
@@ -169,10 +156,7 @@ export async function POST(request: NextRequest) {
         );
 
         if (existingWallet) {
-          return NextResponse.json(
-            { error: 'Wallet already imported', wallet: existingWallet },
-            { status: 409 }
-          );
+          return NextResponse.json({ error: 'Wallet already imported', wallet: existingWallet }, { status: 409 });
         }
 
         const wallet = {
@@ -190,25 +174,16 @@ export async function POST(request: NextRequest) {
 
       case 'fund': {
         if (!masterWallet || !walletId) {
-          return NextResponse.json(
-            { error: 'Missing masterWallet or walletId' },
-            { status: 400 }
-          );
+          return NextResponse.json({ error: 'Missing masterWallet or walletId' }, { status: 400 });
         }
 
         if (!isValidSolanaAddress(masterWallet)) {
-          return NextResponse.json(
-            { error: 'Invalid master wallet address' },
-            { status: 400 }
-          );
+          return NextResponse.json({ error: 'Invalid master wallet address' }, { status: 400 });
         }
 
         const wallet = wallets.get(walletId);
         if (!wallet) {
-          return NextResponse.json(
-            { error: 'Wallet not found' },
-            { status: 404 }
-          );
+          return NextResponse.json({ error: 'Wallet not found' }, { status: 404 });
         }
 
         wallet.balance += body.amount || 0.1;
@@ -219,17 +194,11 @@ export async function POST(request: NextRequest) {
 
       case 'recover': {
         if (!masterWallet) {
-          return NextResponse.json(
-            { error: 'Missing masterWallet' },
-            { status: 400 }
-          );
+          return NextResponse.json({ error: 'Missing masterWallet' }, { status: 400 });
         }
 
         if (!isValidSolanaAddress(masterWallet)) {
-          return NextResponse.json(
-            { error: 'Invalid master wallet address' },
-            { status: 400 }
-          );
+          return NextResponse.json({ error: 'Invalid master wallet address' }, { status: 400 });
         }
 
         let totalRecovered = 0;
@@ -253,41 +222,26 @@ export async function POST(request: NextRequest) {
       }
 
       default:
-        return NextResponse.json(
-          { error: 'Invalid action. Use: generate, import, fund, or recover' },
-          { status: 400 }
-        );
+        return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
     }
   } catch (error) {
-    console.error('Wallet API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to process wallet action' },
-      { status: 500 }
-    );
+    console.error('POST error:', error);
+    return NextResponse.json({ error: 'Failed to process wallet action' }, { status: 500 });
   }
 }
 
 export async function PATCH(request: NextRequest) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
-
   try {
     const body = await request.json();
     const { walletId, isActive } = body;
 
     if (!walletId) {
-      return NextResponse.json(
-        { error: 'Missing walletId' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Missing walletId' }, { status: 400 });
     }
 
     const wallet = wallets.get(walletId);
     if (!wallet) {
-      return NextResponse.json(
-        { error: 'Wallet not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Wallet not found' }, { status: 404 });
     }
 
     wallet.isActive = isActive ?? wallet.isActive;
@@ -295,42 +249,27 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ wallet });
   } catch (error) {
-    return NextResponse.json(
-      { error: 'Failed to update wallet' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to update wallet' }, { status: 500 });
   }
 }
 
 export async function DELETE(request: NextRequest) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
-
   try {
     const { searchParams } = new URL(request.url);
     const walletId = searchParams.get('id');
 
     if (!walletId) {
-      return NextResponse.json(
-        { error: 'Missing wallet id' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Missing wallet id' }, { status: 400 });
     }
 
     const deleted = wallets.delete(walletId);
     
     if (!deleted) {
-      return NextResponse.json(
-        { error: 'Wallet not found' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Wallet not found' }, { status: 404 });
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    return NextResponse.json(
-      { error: 'Failed to delete wallet' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to delete wallet' }, { status: 500 });
   }
 }

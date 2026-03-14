@@ -1,26 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { checkRateLimit, createRateLimitMiddleware } from '@/utils/rateLimit';
-
-const rateLimitMiddleware = createRateLimitMiddleware({
-  windowMs: 60000,
-  maxRequests: 100,
-});
+import { v4 as uuidv4 } from 'uuid';
 
 const campaigns = new Map();
-let campaignIdCounter = 1;
 
-export async function GET(request: NextRequest) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
-
-  const campaignsList = Array.from(campaigns.values());
-  return NextResponse.json({ campaigns: campaignsList });
+export async function GET() {
+  try {
+    const campaignsList = Array.from(campaigns.values());
+    return NextResponse.json({ campaigns: campaignsList });
+  } catch (error) {
+    console.error('GET error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
 }
 
 export async function POST(request: NextRequest) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
-
   try {
     const body = await request.json();
     const { name, tokenMint, strategy, budget, realism } = body;
@@ -33,7 +26,7 @@ export async function POST(request: NextRequest) {
     }
 
     const campaign = {
-      id: `campaign-${campaignIdCounter++}`,
+      id: uuidv4(),
       name,
       tokenMint,
       strategy,
@@ -77,6 +70,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ campaign }, { status: 201 });
   } catch (error) {
+    console.error('POST error:', error);
     return NextResponse.json(
       { error: 'Failed to create campaign' },
       { status: 500 }

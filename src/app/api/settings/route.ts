@@ -1,10 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { checkRateLimit, createRateLimitMiddleware } from '@/utils/rateLimit';
-
-const rateLimitMiddleware = createRateLimitMiddleware({
-  windowMs: 60000,
-  maxRequests: 30,
-});
 
 let settings = {
   rpcUrl: 'https://api.mainnet-beta.solana.com',
@@ -39,25 +33,24 @@ const presets = [
   },
 ];
 
-export async function GET(request: NextRequest) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
-
-  return NextResponse.json({
-    settings: {
-      rpcUrl: settings.rpcUrl,
-      defaultMevProvider: settings.defaultMevProvider,
-      telegramWebhook: settings.telegramWebhook ? 'configured' : '',
-      emailAlerts: settings.emailAlerts ? 'configured' : '',
-    },
-    presets,
-  });
+export async function GET() {
+  try {
+    return NextResponse.json({
+      settings: {
+        rpcUrl: settings.rpcUrl,
+        defaultMevProvider: settings.defaultMevProvider,
+        telegramWebhook: settings.telegramWebhook ? 'configured' : '',
+        emailAlerts: settings.emailAlerts ? 'configured' : '',
+      },
+      presets,
+    });
+  } catch (error) {
+    console.error('GET error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
 }
 
 export async function POST(request: NextRequest) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
-
   try {
     const body = await request.json();
     const { action, ...updates } = body;
@@ -88,7 +81,7 @@ export async function POST(request: NextRequest) {
           success: isHealthy,
           message: isHealthy ? 'RPC is healthy' : 'RPC returned error',
         });
-      } catch (error) {
+      } catch {
         return NextResponse.json({
           success: false,
           message: 'Failed to connect to RPC',
@@ -96,44 +89,28 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json(
-      { error: 'Invalid action. Use: save or test-rpc' },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   } catch (error) {
-    return NextResponse.json(
-      { error: 'Failed to process settings action' },
-      { status: 500 }
-    );
+    console.error('POST error:', error);
+    return NextResponse.json({ error: 'Failed to process settings action' }, { status: 500 });
   }
 }
 
 export async function PUT(request: NextRequest) {
-  const rateLimitResponse = rateLimitMiddleware(request);
-  if (rateLimitResponse) return rateLimitResponse;
-
   try {
     const body = await request.json();
     
     if (body.presetId) {
       const preset = presets.find(p => p.id === body.presetId);
       if (!preset) {
-        return NextResponse.json(
-          { error: 'Preset not found' },
-          { status: 404 }
-        );
+        return NextResponse.json({ error: 'Preset not found' }, { status: 404 });
       }
       return NextResponse.json({ preset });
     }
 
-    return NextResponse.json(
-      { error: 'Missing presetId' },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: 'Missing presetId' }, { status: 400 });
   } catch (error) {
-    return NextResponse.json(
-      { error: 'Failed to load preset' },
-      { status: 500 }
-    );
+    console.error('PUT error:', error);
+    return NextResponse.json({ error: 'Failed to load preset' }, { status: 500 });
   }
 }
