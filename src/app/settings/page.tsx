@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { settingsApi } from '@/lib/api';
 import { 
   LayoutDashboard, 
   Plus, 
@@ -18,7 +19,11 @@ import {
   Bell,
   Server,
   Zap,
-  Key
+  Key,
+  AlertCircle,
+  CheckCircle,
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 
 export default function SettingsPage() {
@@ -32,12 +37,89 @@ export default function SettingsPage() {
     emailAlerts: '',
   });
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const fetchSettings = async () => {
+    setLoading(true);
+    const { data, error } = await settingsApi.get();
+    if (data?.settings) {
+      const s = data.settings as Record<string, string>;
+      setSettings({
+        rpcUrl: s.rpcUrl || settings.rpcUrl,
+        jitoUuid: '',
+        nozomiApiKey: '',
+        astralaneApiKey: '',
+        mevProvider: s.defaultMevProvider || 'jito',
+        telegramWebhook: s.telegramWebhook === 'configured' ? '' : s.telegramWebhook || '',
+        emailAlerts: s.emailAlerts === 'configured' ? '' : s.emailAlerts || '',
+      });
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleSave = async () => {
     setSaving(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    setMessage(null);
+    
+    const { data, error } = await settingsApi.save({
+      rpcUrl: settings.rpcUrl,
+      jitoUuid: settings.jitoUuid,
+      nozomiApiKey: settings.nozomiApiKey,
+      astralaneApiKey: settings.astralaneApiKey,
+      defaultMevProvider: settings.mevProvider,
+      telegramWebhook: settings.telegramWebhook,
+      emailAlerts: settings.emailAlerts,
+    });
+    
+    if (error) {
+      setMessage({ type: 'error', text: error });
+    } else {
+      setMessage({ type: 'success', text: 'Settings saved successfully!' });
+    }
     setSaving(false);
   };
+
+  const handleTestRpc = async () => {
+    setTesting(true);
+    setMessage(null);
+    
+    const { data, error } = await settingsApi.testRpc(settings.rpcUrl);
+    
+    if (error) {
+      setMessage({ type: 'error', text: error });
+    } else if (data?.success) {
+      setMessage({ type: 'success', text: 'RPC connection successful!' });
+    } else {
+      setMessage({ type: 'error', text: data?.message || 'RPC test failed' });
+    }
+    setTesting(false);
+  };
+
+  const handleLoadPreset = async (presetId: string) => {
+    const { data, error } = await settingsApi.loadPreset(presetId);
+    if (data?.preset) {
+      const preset = data.preset as { settings: Record<string, unknown> };
+      setMessage({ type: 'success', text: `Loaded preset: ${presetId}` });
+    } else if (error) {
+      setMessage({ type: 'error', text: error });
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <RefreshCw className="h-8 w-8 animate-spin text-slate-400" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -84,6 +166,15 @@ export default function SettingsPage() {
           <p className="text-slate-500 mt-1">Configure your SVBB preferences</p>
         </div>
 
+        {message && (
+          <div className={`mb-6 p-4 rounded-lg flex items-center space-x-2 ${
+            message.type === 'success' ? 'bg-green-50 border border-green-200 text-green-700' : 'bg-red-50 border border-red-200 text-red-700'
+          }`}>
+            {message.type === 'success' ? <CheckCircle className="h-5 w-5" /> : <AlertCircle className="h-5 w-5" />}
+            <span>{message.text}</span>
+          </div>
+        )}
+
         <Card className="mb-6">
           <CardHeader>
             <CardTitle className="flex items-center">
@@ -97,11 +188,17 @@ export default function SettingsPage() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label>RPC URL</Label>
-              <Input 
-                value={settings.rpcUrl}
-                onChange={(e) => setSettings({...settings, rpcUrl: e.target.value})}
-                placeholder="https://api.mainnet-beta.solana.com"
-              />
+              <div className="flex space-x-2">
+                <Input 
+                  value={settings.rpcUrl}
+                  onChange={(e) => setSettings({...settings, rpcUrl: e.target.value})}
+                  placeholder="https://api.mainnet-beta.solana.com"
+                  className="flex-1"
+                />
+                <Button variant="outline" onClick={handleTestRpc} disabled={testing}>
+                  {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Test'}
+                </Button>
+              </div>
               <p className="text-xs text-slate-500">
                 Recommended: Helius, QuickNode, or Triton for production use
               </p>
@@ -237,14 +334,14 @@ export default function SettingsPage() {
                 <p className="font-medium">Aggressive Mode</p>
                 <p className="text-sm text-slate-500">500 wallets, 60/40 buy ratio, burst mode</p>
               </div>
-              <Button variant="outline" size="sm">Load</Button>
+              <Button variant="outline" size="sm" onClick={() => handleLoadPreset('aggressive')}>Load</Button>
             </div>
             <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg mt-2">
               <div>
                 <p className="font-medium">Stealth Mode</p>
                 <p className="text-sm text-slate-500">100 wallets, 70/30 buy ratio, drip mode</p>
               </div>
-              <Button variant="outline" size="sm">Load</Button>
+              <Button variant="outline" size="sm" onClick={() => handleLoadPreset('stealth')}>Load</Button>
             </div>
           </CardContent>
         </Card>
@@ -252,13 +349,11 @@ export default function SettingsPage() {
         <div className="flex justify-end">
           <Button onClick={handleSave} disabled={saving} size="lg">
             {saving ? (
-              <>Saving...</>
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
             ) : (
-              <>
-                <Save className="h-4 w-4 mr-2" />
-                Save Settings
-              </>
+              <Save className="h-4 w-4 mr-2" />
             )}
+            Save Settings
           </Button>
         </div>
       </main>

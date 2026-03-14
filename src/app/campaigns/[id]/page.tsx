@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { campaignApi } from '@/lib/api';
 import { 
   LayoutDashboard, 
   Plus, 
@@ -21,7 +22,8 @@ import {
   ArrowDownRight,
   Zap,
   ExternalLink,
-  RefreshCw
+  RefreshCw,
+  AlertCircle
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -48,6 +50,16 @@ interface CampaignData {
     total: number;
     spent: number;
   };
+  stats: {
+    totalVolume: number;
+    transactionCount: number;
+    makerCount: number;
+  };
+  realism?: {
+    walletCount: number;
+    buyRatio: number;
+  };
+  createdAt?: string;
 }
 
 interface Transaction {
@@ -56,21 +68,9 @@ interface Transaction {
   type: 'buy' | 'sell';
   amount: number;
   price: number;
-  timestamp: Date;
+  timestamp: string;
   status: 'confirmed' | 'pending' | 'failed';
 }
-
-const mockCampaign: CampaignData = {
-  id: '1',
-  name: 'PEPE Launch',
-  tokenMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1o',
-  strategy: 'drip',
-  status: 'running',
-  budget: {
-    total: 10,
-    spent: 3.5,
-  },
-};
 
 const volumeData = [
   { time: '00:00', volume: 2.1 },
@@ -98,18 +98,40 @@ const buySellData = [
 ];
 
 const mockTransactions: Transaction[] = [
-  { id: '1', signature: '5Jk7...8R2K', type: 'buy', amount: 0.15, price: 0.042, timestamp: new Date(), status: 'confirmed' },
-  { id: '2', signature: '8Lm3...P9QX', type: 'sell', amount: 0.08, price: 0.044, timestamp: new Date(Date.now() - 60000), status: 'confirmed' },
-  { id: '3', signature: '2Ab9...T4WH', type: 'buy', amount: 0.22, price: 0.043, timestamp: new Date(Date.now() - 120000), status: 'confirmed' },
-  { id: '4', signature: '7Kc1...M6ZF', type: 'buy', amount: 0.11, price: 0.041, timestamp: new Date(Date.now() - 180000), status: 'confirmed' },
-  { id: '5', signature: '4Pd2...L8VG', type: 'sell', amount: 0.05, price: 0.045, timestamp: new Date(Date.now() - 240000), status: 'confirmed' },
+  { id: '1', signature: '5Jk7...8R2K', type: 'buy', amount: 0.15, price: 0.042, timestamp: new Date().toISOString(), status: 'confirmed' },
+  { id: '2', signature: '8Lm3...P9QX', type: 'sell', amount: 0.08, price: 0.044, timestamp: new Date(Date.now() - 60000).toISOString(), status: 'confirmed' },
+  { id: '3', signature: '2Ab9...T4WH', type: 'buy', amount: 0.22, price: 0.043, timestamp: new Date(Date.now() - 120000).toISOString(), status: 'confirmed' },
+  { id: '4', signature: '7Kc1...M6ZF', type: 'buy', amount: 0.11, price: 0.041, timestamp: new Date(Date.now() - 180000).toISOString(), status: 'confirmed' },
+  { id: '5', signature: '4Pd2...L8VG', type: 'sell', amount: 0.05, price: 0.045, timestamp: new Date(Date.now() - 240000).toISOString(), status: 'confirmed' },
 ];
 
 export default function CampaignDetail() {
   const params = useParams();
-  const [campaign, setCampaign] = useState<CampaignData>(mockCampaign);
+  const router = useRouter();
+  const [campaign, setCampaign] = useState<CampaignData | null>(null);
   const [transactions, setTransactions] = useState<Transaction[]>(mockTransactions);
   const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const fetchCampaign = async () => {
+    setLoading(true);
+    setError('');
+    const id = params.id as string;
+    const { data, error: err } = await campaignApi.getById(id);
+    if (err) {
+      setError(err);
+    } else if (data?.campaign) {
+      setCampaign(data.campaign as CampaignData);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchCampaign();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.id]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -120,25 +142,78 @@ export default function CampaignDetail() {
     }
   };
 
-  const budgetPercentage = (campaign.budget.spent / campaign.budget.total) * 100;
+  const budgetPercentage = campaign ? (campaign.budget.spent / campaign.budget.total) * 100 : 0;
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await fetchCampaign();
     setRefreshing(false);
   };
 
-  const handlePause = () => {
-    setCampaign({ ...campaign, status: 'paused' });
+  const handlePause = async () => {
+    if (!campaign) return;
+    const { error } = await campaignApi.pause(campaign.id);
+    if (!error) {
+      setCampaign({ ...campaign, status: 'paused' });
+    }
   };
 
-  const handleResume = () => {
-    setCampaign({ ...campaign, status: 'running' });
+  const handleResume = async () => {
+    if (!campaign) return;
+    const { error } = await campaignApi.start(campaign.id);
+    if (!error) {
+      setCampaign({ ...campaign, status: 'running' });
+    }
   };
 
-  const handleStop = () => {
-    setCampaign({ ...campaign, status: 'stopped' });
+  const handleStop = async () => {
+    if (!campaign) return;
+    const { error } = await campaignApi.stop(campaign.id);
+    if (!error) {
+      setCampaign({ ...campaign, status: 'stopped' });
+    }
   };
+
+  const handleDelete = async () => {
+    if (!campaign) return;
+    if (confirm('Are you sure you want to delete this campaign?')) {
+      const { error } = await campaignApi.delete(campaign.id);
+      if (!error) {
+        router.push('/');
+      }
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <RefreshCw className="h-8 w-8 animate-spin text-slate-400" />
+      </div>
+    );
+  }
+
+  if (error || !campaign) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <AlertCircle className="h-12 w-12 mx-auto text-red-400 mb-4" />
+          <h2 className="text-xl font-semibold mb-2">Campaign not found</h2>
+          <p className="text-slate-500 mb-4">{error || 'The campaign you are looking for does not exist.'}</p>
+          <Link href="/">
+            <Button>Back to Dashboard</Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const buyRatio = campaign.realism?.buyRatio || 0.6;
+  const sellRatio = 1 - buyRatio;
+  const activeBuySellData = [
+    { name: 'Buy', value: Math.round(buyRatio * 100), color: '#22c55e' },
+    { name: 'Sell', value: Math.round(sellRatio * 100), color: '#ef4444' },
+  ];
+  const walletCount = campaign.realism?.walletCount || 100;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -208,9 +283,14 @@ export default function CampaignDetail() {
                 Resume
               </Button>
             ) : null}
-            <Button variant="destructive" onClick={handleStop}>
-              <Square className="h-4 w-4 mr-2" />
-              Stop & Recover
+            {campaign.status !== 'stopped' && (
+              <Button variant="destructive" onClick={handleStop}>
+                <Square className="h-4 w-4 mr-2" />
+                Stop
+              </Button>
+            )}
+            <Button variant="outline" onClick={handleDelete} className="text-red-500 border-red-200 hover:bg-red-50">
+              Delete
             </Button>
           </div>
         </div>
@@ -222,7 +302,7 @@ export default function CampaignDetail() {
               <TrendingUp className="h-4 w-4 text-slate-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">7.82 SOL</div>
+              <div className="text-2xl font-bold">{(campaign.stats?.totalVolume || 0).toFixed(2)} SOL</div>
               <p className="text-xs text-green-500 flex items-center mt-1">
                 <ArrowUpRight className="h-3 w-3 mr-1" />
                 +12.4%
@@ -235,7 +315,7 @@ export default function CampaignDetail() {
               <Activity className="h-4 w-4 text-slate-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">1,247</div>
+              <div className="text-2xl font-bold">{(campaign.stats?.transactionCount || 0).toLocaleString()}</div>
               <p className="text-xs text-green-500 flex items-center mt-1">
                 <ArrowUpRight className="h-3 w-3 mr-1" />
                 +8.2%
@@ -248,7 +328,7 @@ export default function CampaignDetail() {
               <Clock className="h-4 w-4 text-slate-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">89</div>
+              <div className="text-2xl font-bold">{campaign.stats?.makerCount || 0}</div>
               <p className="text-xs text-green-500 flex items-center mt-1">
                 <ArrowUpRight className="h-3 w-3 mr-1" />
                 +5 new
@@ -265,11 +345,11 @@ export default function CampaignDetail() {
               <div className="w-full bg-slate-200 rounded-full h-2 mt-2">
                 <div 
                   className="bg-blue-600 h-2 rounded-full" 
-                  style={{ width: `${budgetPercentage}%` }}
+                  style={{ width: `${Math.min(100, budgetPercentage)}%` }}
                 />
               </div>
               <p className="text-xs text-slate-500 mt-1">
-                {campaign.budget.spent} / {campaign.budget.total} SOL
+                {campaign.budget.spent.toFixed(2)} / {campaign.budget.total} SOL
               </p>
             </CardContent>
           </Card>
@@ -347,7 +427,7 @@ export default function CampaignDetail() {
               <ResponsiveContainer width="100%" height={200}>
                 <PieChart>
                   <Pie
-                    data={buySellData}
+                    data={activeBuySellData}
                     cx="50%"
                     cy="50%"
                     innerRadius={50}
@@ -355,7 +435,7 @@ export default function CampaignDetail() {
                     paddingAngle={5}
                     dataKey="value"
                   >
-                    {buySellData.map((entry, index) => (
+                    {activeBuySellData.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={entry.color} />
                     ))}
                   </Pie>
@@ -365,11 +445,11 @@ export default function CampaignDetail() {
               <div className="flex justify-center space-x-6 mt-4">
                 <div className="flex items-center">
                   <div className="w-3 h-3 rounded-full bg-green-500 mr-2" />
-                  <span className="text-sm">Buy ({buySellData[0].value}%)</span>
+                  <span className="text-sm">Buy ({activeBuySellData[0].value}%)</span>
                 </div>
                 <div className="flex items-center">
                   <div className="w-3 h-3 rounded-full bg-red-500 mr-2" />
-                  <span className="text-sm">Sell ({buySellData[1].value}%)</span>
+                  <span className="text-sm">Sell ({activeBuySellData[1].value}%)</span>
                 </div>
               </div>
             </CardContent>
@@ -383,26 +463,30 @@ export default function CampaignDetail() {
             <CardContent>
               <div className="grid grid-cols-3 gap-4">
                 <div className="text-center p-4 bg-slate-50 rounded-lg">
-                  <div className="text-2xl font-bold">100</div>
+                  <div className="text-2xl font-bold">{walletCount}</div>
                   <div className="text-sm text-slate-500">Total Wallets</div>
                 </div>
                 <div className="text-center p-4 bg-slate-50 rounded-lg">
-                  <div className="text-2xl font-bold">85</div>
+                  <div className="text-2xl font-bold">{campaign.stats?.makerCount || 0}</div>
                   <div className="text-sm text-slate-500">Active</div>
                 </div>
                 <div className="text-center p-4 bg-slate-50 rounded-lg">
-                  <div className="text-2xl font-bold">15</div>
+                  <div className="text-2xl font-bold">{Math.max(0, walletCount - (campaign.stats?.makerCount || 0))}</div>
                   <div className="text-sm text-slate-500">Idle</div>
                 </div>
               </div>
               <div className="mt-4">
                 <div className="flex justify-between text-sm mb-2">
                   <span className="text-slate-500">Average tx per wallet</span>
-                  <span className="font-medium">12.5</span>
+                  <span className="font-medium">
+                    {campaign.stats?.makerCount ? (campaign.stats.transactionCount / campaign.stats.makerCount).toFixed(1) : '0'}
+                  </span>
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-500">Average SOL per wallet</span>
-                  <span className="font-medium">0.078 SOL</span>
+                  <span className="font-medium">
+                    {campaign.stats?.makerCount ? (campaign.stats.totalVolume / campaign.stats.makerCount).toFixed(4) : '0'} SOL
+                  </span>
                 </div>
               </div>
             </CardContent>
@@ -456,7 +540,7 @@ export default function CampaignDetail() {
                     </a>
                   </div>
                   <div className="col-span-2 text-sm text-slate-500">
-                    {tx.timestamp.toLocaleTimeString()}
+                    {new Date(tx.timestamp).toLocaleTimeString()}
                   </div>
                 </div>
               ))}

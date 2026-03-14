@@ -163,3 +163,36 @@ export async function PATCH(request: NextRequest) {
     );
   }
 }
+
+export async function DELETE(request: NextRequest) {
+  const rateLimitResponse = rateLimitMiddleware(request);
+  if (rateLimitResponse) return rateLimitResponse;
+
+  try {
+    const { searchParams } = new URL(request.url);
+    const walletId = searchParams.get('id');
+
+    if (!walletId) {
+      return NextResponse.json(
+        { error: 'Missing wallet id' },
+        { status: 400 }
+      );
+    }
+
+    const deleted = wallets.delete(walletId);
+    
+    if (!deleted) {
+      return NextResponse.json(
+        { error: 'Wallet not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    return NextResponse.json(
+      { error: 'Failed to delete wallet' },
+      { status: 500 }
+    );
+  }
+}

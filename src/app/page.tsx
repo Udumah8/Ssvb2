@@ -1,12 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { campaignApi } from '@/lib/api';
 import { 
   LayoutDashboard, 
   Plus, 
@@ -17,10 +15,9 @@ import {
   Pause,
   Square,
   TrendingUp,
-  ArrowUpRight,
-  ArrowDownRight,
   Clock,
-  Zap
+  Zap,
+  RefreshCw
 } from 'lucide-react';
 
 interface Campaign {
@@ -29,36 +26,16 @@ interface Campaign {
   tokenMint: string;
   strategy: string;
   status: 'running' | 'paused' | 'stopped' | 'pending';
-  volume: number;
-  txCount: number;
-  makers: number;
-  budgetUsed: number;
+  stats: {
+    totalVolume: number;
+    transactionCount: number;
+    makerCount: number;
+  };
+  budget: {
+    total: number;
+    spent: number;
+  };
 }
-
-const mockCampaigns: Campaign[] = [
-  {
-    id: '1',
-    name: 'PEPE Launch',
-    tokenMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1o',
-    strategy: 'drip',
-    status: 'running',
-    volume: 45.2,
-    txCount: 1247,
-    makers: 89,
-    budgetUsed: 35,
-  },
-  {
-    id: '2',
-    name: 'BONK Boost',
-    tokenMint: 'DezXAZ8z7PnrnRJjz3wXBoRgixRb6xQqHZ7K9iG1i7v',
-    strategy: 'burst',
-    status: 'paused',
-    volume: 128.5,
-    txCount: 3892,
-    makers: 234,
-    budgetUsed: 72,
-  },
-];
 
 const strategies = [
   { value: 'drip', label: 'Drip (1-5 tx/min)', description: 'Gradual steady volume' },
@@ -68,11 +45,48 @@ const strategies = [
 ];
 
 export default function Dashboard() {
-  const [campaigns, setCampaigns] = useState<Campaign[]>(mockCampaigns);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const totalVolume = campaigns.reduce((sum, c) => sum + c.volume, 0);
-  const totalTx = campaigns.reduce((sum, c) => sum + c.txCount, 0);
+  const fetchCampaigns = async () => {
+    setLoading(true);
+    const { data, error } = await campaignApi.getAll();
+    if (data && data.campaigns) {
+      setCampaigns(data.campaigns as Campaign[]);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchCampaigns();
+  }, []);
+
+  const handlePause = async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await campaignApi.pause(id);
+    fetchCampaigns();
+  };
+
+  const handleResume = async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await campaignApi.start(id);
+    fetchCampaigns();
+  };
+
+  const handleStop = async (id: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    await campaignApi.stop(id);
+    fetchCampaigns();
+  };
+
+  const totalVolume = campaigns.reduce((sum, c) => sum + (c.stats?.totalVolume || 0), 0);
+  const totalTx = campaigns.reduce((sum, c) => sum + (c.stats?.transactionCount || 0), 0);
   const runningCampaigns = campaigns.filter(c => c.status === 'running').length;
+  const totalMakers = campaigns.reduce((sum, c) => sum + (c.stats?.makerCount || 0), 0);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -81,6 +95,11 @@ export default function Dashboard() {
       case 'stopped': return 'text-red-500';
       default: return 'text-gray-500';
     }
+  };
+
+  const getBudgetUsed = (campaign: Campaign) => {
+    if (!campaign.budget?.total) return 0;
+    return Math.round((campaign.budget.spent / campaign.budget.total) * 100);
   };
 
   return (
@@ -164,7 +183,7 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">
-                {campaigns.reduce((sum, c) => sum + c.makers, 0)}
+                {totalMakers}
               </div>
               <p className="text-xs text-slate-500">Total makers</p>
             </CardContent>
@@ -172,7 +191,12 @@ export default function Dashboard() {
         </div>
 
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold">Active Campaigns</h2>
+          <div className="flex items-center space-x-4">
+            <h2 className="text-xl font-semibold">Active Campaigns</h2>
+            <Button variant="ghost" size="sm" onClick={fetchCampaigns} disabled={loading}>
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
           <Link href="/campaigns/new">
             <Button>
               <Plus className="h-4 w-4 mr-2" />
@@ -181,6 +205,12 @@ export default function Dashboard() {
           </Link>
         </div>
 
+        {loading ? (
+          <Card className="p-12 text-center">
+            <RefreshCw className="h-8 w-8 mx-auto text-slate-300 mb-4 animate-spin" />
+            <p className="text-slate-500">Loading campaigns...</p>
+          </Card>
+        ) : (
         <div className="grid gap-4">
           {campaigns.map((campaign) => (
             <Link key={campaign.id} href={`/campaigns/${campaign.id}`}>
@@ -204,31 +234,31 @@ export default function Dashboard() {
                     <div className="flex items-center space-x-8">
                       <div className="text-right">
                         <p className="text-sm text-slate-500">Volume</p>
-                        <p className="text-lg font-semibold">{campaign.volume.toFixed(2)} SOL</p>
+                        <p className="text-lg font-semibold">{(campaign.stats?.totalVolume || 0).toFixed(2)} SOL</p>
                       </div>
                       <div className="text-right">
                         <p className="text-sm text-slate-500">Tx Count</p>
-                        <p className="text-lg font-semibold">{campaign.txCount.toLocaleString()}</p>
+                        <p className="text-lg font-semibold">{(campaign.stats?.transactionCount || 0).toLocaleString()}</p>
                       </div>
                       <div className="text-right">
                         <p className="text-sm text-slate-500">Makers</p>
-                        <p className="text-lg font-semibold">{campaign.makers}</p>
+                        <p className="text-lg font-semibold">{campaign.stats?.makerCount || 0}</p>
                       </div>
                       <div className="text-right">
                         <p className="text-sm text-slate-500">Budget</p>
-                        <p className="text-lg font-semibold">{campaign.budgetUsed}%</p>
+                        <p className="text-lg font-semibold">{getBudgetUsed(campaign)}%</p>
                       </div>
                       <div className="flex space-x-2">
                         {campaign.status === 'running' ? (
-                          <Button variant="outline" size="icon" onClick={(e) => e.preventDefault()}>
+                          <Button variant="outline" size="icon" onClick={(e) => handlePause(campaign.id, e)}>
                             <Pause className="h-4 w-4" />
                           </Button>
                         ) : campaign.status === 'paused' ? (
-                          <Button variant="outline" size="icon" onClick={(e) => e.preventDefault()}>
+                          <Button variant="outline" size="icon" onClick={(e) => handleResume(campaign.id, e)}>
                             <Play className="h-4 w-4" />
                           </Button>
                         ) : null}
-                        <Button variant="outline" size="icon" onClick={(e) => e.preventDefault()}>
+                        <Button variant="outline" size="icon" onClick={(e) => handleStop(campaign.id, e)}>
                           <Square className="h-4 w-4 text-red-500" />
                         </Button>
                       </div>
@@ -238,7 +268,7 @@ export default function Dashboard() {
               </Card>
             </Link>
           ))}
-        </div>
+        </div>)}
 
         {campaigns.length === 0 && (
           <Card className="p-12 text-center">

@@ -1,55 +1,139 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { walletApi } from '@/lib/api';
 import { 
   LayoutDashboard, 
   Plus, 
   Settings, 
   Wallet, 
   ArrowLeft,
-  ArrowRight,
   RefreshCw,
   Copy,
   Trash2,
   Eye,
   EyeOff,
   Download,
-  Upload
+  Upload,
+  AlertCircle
 } from 'lucide-react';
 
 interface WalletInfo {
   id: string;
   publicKey: string;
+  privateKeyEncrypted?: string;
   balance: number;
   isActive: boolean;
+  createdAt?: string;
 }
 
-const mockWallets: WalletInfo[] = [
-  { id: '1', publicKey: '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU', balance: 0.5, isActive: true },
-  { id: '2', publicKey: 'Ah22aCgL7S6w4qZ7v8N9J0K1L2M3N4O5P6Q7R8S9T0U', balance: 0.3, isActive: true },
-  { id: '3', publicKey: 'Bj33bDpM8T7w5qY8R9S0K1T2U3V4W5X6Y7Z8A9B0C1', balance: 0.8, isActive: true },
-  { id: '4', publicKey: 'Ck44cEqN9T8x6pZ9T0U1V2W3X4Y5Z6A7B8C9D0E1F2', balance: 0.2, isActive: false },
-  { id: '5', publicKey: 'Dl55dFrO0U9y7qA1U2V3W4X5Y6Z7A8B9C0D1E2F3G4', balance: 0.6, isActive: true },
-];
-
 export default function WalletsPage() {
-  const [wallets, setWallets] = useState<WalletInfo[]>(mockWallets);
+  const [wallets, setWallets] = useState<WalletInfo[]>([]);
   const [showBalances, setShowBalances] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [distributing, setDistributing] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  
+  const [masterWallet, setMasterWallet] = useState('');
+  const [amountPerWallet, setAmountPerWallet] = useState('0.1');
+  const [walletCount, setWalletCount] = useState('10');
 
-  const handleGenerateWallets = async (count: number) => {
-    setGenerating(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    setGenerating(false);
+  const fetchWallets = async () => {
+    setLoading(true);
+    setError('');
+    const { data, error: err } = await walletApi.getAll();
+    if (err) {
+      setError(err);
+    } else if (data?.wallets) {
+      setWallets(data.wallets as WalletInfo[]);
+    }
+    setLoading(false);
   };
 
-  const copyToClipboard = (text: string) => {
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchWallets();
+  }, []);
+
+  const handleGenerateWallets = async () => {
+    setGenerating(true);
+    setError('');
+    const count = parseInt(walletCount) || 10;
+    const { data, error: err } = await walletApi.generate(count);
+    if (err) {
+      setError(err);
+    } else if (data?.wallets) {
+      setWallets([...wallets, ...(data.wallets as WalletInfo[])]);
+    }
+    setGenerating(false);
+    fetchWallets();
+  };
+
+  const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
+  };
+
+  const handleToggleActive = async (walletId: string, currentStatus: boolean) => {
+    const { data, error: err } = await walletApi.setActive(walletId, !currentStatus);
+    if (!err && data?.wallet) {
+      setWallets(wallets.map(w => 
+        w.id === walletId ? { ...w, isActive: !currentStatus } : w
+      ));
+    }
+  };
+
+  const handleDelete = async (walletId: string) => {
+    const response = await fetch(`/api/wallets?id=${walletId}`, {
+      method: 'DELETE',
+    });
+    if (response.ok) {
+      setWallets(wallets.filter(w => w.id !== walletId));
+    }
+  };
+
+  const handleDistribute = async () => {
+    if (!masterWallet) {
+      setError('Please enter a master wallet address');
+      return;
+    }
+    setDistributing(true);
+    setError('');
+    
+    const amount = parseFloat(amountPerWallet) || 0.1;
+    const count = parseInt(walletCount) || 10;
+    
+    for (let i = 0; i < Math.min(count, wallets.length); i++) {
+      if (wallets[i].isActive) {
+        await walletApi.fund(wallets[i].id, masterWallet, amount);
+      }
+    }
+    
+    setDistributing(false);
+    fetchWallets();
+  };
+
+  const handleRecover = async () => {
+    if (!masterWallet) {
+      setError('Please enter a master wallet address');
+      return;
+    }
+    setRecovering(true);
+    setError('');
+    
+    const { data, error: err } = await walletApi.recover(masterWallet);
+    if (err) {
+      setError(err);
+    }
+    
+    setRecovering(false);
+    fetchWallets();
   };
 
   const totalBalance = wallets.reduce((sum, w) => sum + w.balance, 0);
@@ -100,6 +184,13 @@ export default function WalletsPage() {
           <p className="text-slate-500 mt-1">Manage burner wallets for your campaigns</p>
         </div>
 
+        {error && (
+          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center space-x-2 text-red-700">
+            <AlertCircle className="h-5 w-5" />
+            <span>{error}</span>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -127,7 +218,7 @@ export default function WalletsPage() {
               <Wallet className="h-4 w-4 text-slate-500" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{totalBalance.toFixed(2)} SOL</div>
+              <div className="text-2xl font-bold">{totalBalance.toFixed(4)} SOL</div>
               <p className="text-xs text-slate-500">Across all wallets</p>
             </CardContent>
           </Card>
@@ -139,17 +230,22 @@ export default function WalletsPage() {
               {showBalances ? <EyeOff className="h-4 w-4 mr-2" /> : <Eye className="h-4 w-4 mr-2" />}
               {showBalances ? 'Hide' : 'Show'} Balances
             </Button>
+            <Button variant="outline" onClick={fetchWallets} disabled={loading}>
+              <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
           </div>
           <div className="flex items-center space-x-4">
-            <Button variant="outline">
-              <Download className="h-4 w-4 mr-2" />
-              Export
-            </Button>
-            <Button variant="outline">
-              <Upload className="h-4 w-4 mr-2" />
-              Import
-            </Button>
-            <Button onClick={() => handleGenerateWallets(10)} disabled={generating}>
+            <div className="flex items-center space-x-2">
+              <Input 
+                type="number" 
+                placeholder="Count"
+                value={walletCount}
+                onChange={(e) => setWalletCount(e.target.value)}
+                className="w-20"
+              />
+            </div>
+            <Button onClick={handleGenerateWallets} disabled={generating}>
               {generating ? (
                 <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
               ) : (
@@ -168,56 +264,64 @@ export default function WalletsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-2">
-              <div className="grid grid-cols-12 gap-4 text-sm font-medium text-slate-500 px-4">
-                <div className="col-span-1">Status</div>
-                <div className="col-span-6">Public Key</div>
-                <div className="col-span-3">Balance</div>
-                <div className="col-span-2">Actions</div>
+            {loading ? (
+              <div className="text-center py-8">
+                <RefreshCw className="h-8 w-8 mx-auto animate-spin text-slate-400" />
+                <p className="text-slate-500 mt-2">Loading wallets...</p>
               </div>
-              {wallets.map((wallet) => (
-                <div 
-                  key={wallet.id}
-                  className="grid grid-cols-12 gap-4 items-center px-4 py-3 bg-slate-50 rounded-lg"
-                >
-                  <div className="col-span-1">
-                    <div className={`w-3 h-3 rounded-full ${wallet.isActive ? 'bg-green-500' : 'bg-slate-300'}`} />
-                  </div>
-                  <div className="col-span-6 font-mono text-sm">
-                    {wallet.publicKey.slice(0, 12)}...{wallet.publicKey.slice(-12)}
-                    <button 
-                      onClick={() => copyToClipboard(wallet.publicKey)}
-                      className="ml-2 text-slate-400 hover:text-slate-600"
-                    >
-                      <Copy className="h-3 w-3 inline" />
-                    </button>
-                  </div>
-                  <div className="col-span-3">
-                    {showBalances ? (
-                      <span className="font-medium">{wallet.balance.toFixed(4)} SOL</span>
-                    ) : (
-                      <span className="text-slate-400">••••••</span>
-                    )}
-                  </div>
-                  <div className="col-span-2 flex space-x-2">
-                    <Button 
-                      variant="ghost" 
-                      size="icon"
-                      onClick={() => {
-                        setWallets(wallets.map(w => 
-                          w.id === wallet.id ? { ...w, isActive: !w.isActive } : w
-                        ));
-                      }}
-                    >
-                      <RefreshCw className={`h-4 w-4 ${wallet.isActive ? 'text-green-500' : 'text-slate-400'}`} />
-                    </Button>
-                    <Button variant="ghost" size="icon">
-                      <Trash2 className="h-4 w-4 text-red-400 hover:text-red-600" />
-                    </Button>
-                  </div>
+            ) : wallets.length === 0 ? (
+              <div className="text-center py-8">
+                <Wallet className="h-12 w-12 mx-auto text-slate-300 mb-4" />
+                <p className="text-slate-500">No wallets yet. Generate some to get started.</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="grid grid-cols-12 gap-4 text-sm font-medium text-slate-500 px-4">
+                  <div className="col-span-1">Status</div>
+                  <div className="col-span-6">Public Key</div>
+                  <div className="col-span-3">Balance</div>
+                  <div className="col-span-2">Actions</div>
                 </div>
-              ))}
-            </div>
+                {wallets.map((wallet) => (
+                  <div 
+                    key={wallet.id}
+                    className="grid grid-cols-12 gap-4 items-center px-4 py-3 bg-slate-50 rounded-lg"
+                  >
+                    <div className="col-span-1">
+                      <div className={`w-3 h-3 rounded-full ${wallet.isActive ? 'bg-green-500' : 'bg-slate-300'}`} />
+                    </div>
+                    <div className="col-span-6 font-mono text-sm">
+                      {wallet.publicKey.slice(0, 12)}...{wallet.publicKey.slice(-12)}
+                      <button 
+                        onClick={() => handleCopy(wallet.publicKey)}
+                        className="ml-2 text-slate-400 hover:text-slate-600"
+                      >
+                        <Copy className="h-3 w-3 inline" />
+                      </button>
+                    </div>
+                    <div className="col-span-3">
+                      {showBalances ? (
+                        <span className="font-medium">{wallet.balance.toFixed(4)} SOL</span>
+                      ) : (
+                        <span className="text-slate-400">••••••</span>
+                      )}
+                    </div>
+                    <div className="col-span-2 flex space-x-2">
+                      <Button 
+                        variant="ghost" 
+                        size="icon"
+                        onClick={() => handleToggleActive(wallet.id, wallet.isActive)}
+                      >
+                        <RefreshCw className={`h-4 w-4 ${wallet.isActive ? 'text-green-500' : 'text-slate-400'}`} />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => handleDelete(wallet.id)}>
+                        <Trash2 className="h-4 w-4 text-red-400 hover:text-red-600" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -229,20 +333,39 @@ export default function WalletsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex items-end gap-4">
-              <div className="flex-1 space-y-2">
+            <div className="flex items-end gap-4 flex-wrap">
+              <div className="flex-1 min-w-[200px] space-y-2">
                 <Label>Master Wallet</Label>
-                <Input placeholder="Enter master wallet address" />
+                <Input 
+                  placeholder="Enter master wallet address" 
+                  value={masterWallet}
+                  onChange={(e) => setMasterWallet(e.target.value)}
+                />
               </div>
-              <div className="flex-1 space-y-2">
+              <div className="flex-1 min-w-[150px] space-y-2">
                 <Label>Amount per Wallet (SOL)</Label>
-                <Input type="number" placeholder="0.1" />
+                <Input 
+                  type="number" 
+                  placeholder="0.1"
+                  value={amountPerWallet}
+                  onChange={(e) => setAmountPerWallet(e.target.value)}
+                />
               </div>
-              <div className="flex-1 space-y-2">
+              <div className="flex-1 min-w-[150px] space-y-2">
                 <Label>Number of Wallets</Label>
-                <Input type="number" placeholder="50" />
+                <Input 
+                  type="number" 
+                  placeholder="50"
+                  value={walletCount}
+                  onChange={(e) => setWalletCount(e.target.value)}
+                />
               </div>
-              <Button>Distribute Funds</Button>
+              <Button onClick={handleDistribute} disabled={distributing || !masterWallet}>
+                {distributing ? (
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                ) : null}
+                Distribute Funds
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -255,12 +378,21 @@ export default function WalletsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex items-end gap-4">
-              <div className="flex-1 space-y-2">
+            <div className="flex items-end gap-4 flex-wrap">
+              <div className="flex-1 min-w-[200px] space-y-2">
                 <Label>Master Wallet</Label>
-                <Input placeholder="Enter master wallet address" />
+                <Input 
+                  placeholder="Enter master wallet address" 
+                  value={masterWallet}
+                  onChange={(e) => setMasterWallet(e.target.value)}
+                />
               </div>
-              <Button variant="destructive">Recover All Funds</Button>
+              <Button onClick={handleRecover} disabled={recovering || !masterWallet} variant="destructive">
+                {recovering ? (
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                ) : null}
+                Recover All Funds
+              </Button>
             </div>
           </CardContent>
         </Card>

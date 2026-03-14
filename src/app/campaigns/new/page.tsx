@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { campaignApi } from '@/lib/api';
 import { 
   LayoutDashboard, 
   Plus, 
@@ -19,7 +20,9 @@ import {
   Zap,
   TrendingUp,
   Activity,
-  Layers
+  Layers,
+  AlertCircle,
+  Loader2
 } from 'lucide-react';
 
 const steps = [
@@ -60,6 +63,8 @@ const strategies = [
 export default function NewCampaign() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
   const [formData, setFormData] = useState({
     tokenMint: '',
     strategy: '',
@@ -79,9 +84,41 @@ export default function NewCampaign() {
     microFailChance: 0.05,
   });
 
+  const validateStep = (step: number): boolean => {
+    setError('');
+    switch (step) {
+      case 1:
+        if (!formData.campaignName.trim()) {
+          setError('Please enter a campaign name');
+          return false;
+        }
+        if (!formData.tokenMint.trim()) {
+          setError('Please enter a token mint address');
+          return false;
+        }
+        return true;
+      case 2:
+        if (!formData.strategy) {
+          setError('Please select a strategy');
+          return false;
+        }
+        return true;
+      case 3:
+        if (formData.totalBudget <= 0) {
+          setError('Total budget must be greater than 0');
+          return false;
+        }
+        return true;
+      default:
+        return true;
+    }
+  };
+
   const handleNext = () => {
-    if (currentStep < 5) {
-      setCurrentStep(currentStep + 1);
+    if (validateStep(currentStep)) {
+      if (currentStep < 5) {
+        setCurrentStep(currentStep + 1);
+      }
     }
   };
 
@@ -91,8 +128,47 @@ export default function NewCampaign() {
     }
   };
 
-  const handleSubmit = () => {
-    console.log('Campaign created:', formData);
+  const handleSubmit = async () => {
+    if (!formData.campaignName.trim() || !formData.tokenMint.trim() || !formData.strategy) {
+      setError('Please complete all required fields');
+      return;
+    }
+    
+    setSubmitting(true);
+    setError('');
+    
+    const campaignData = {
+      name: formData.campaignName,
+      tokenMint: formData.tokenMint,
+      strategy: formData.strategy,
+      budget: {
+        total: formData.totalBudget,
+        daily: formData.dailyBudget,
+        perHour: formData.perHourBudget,
+        slippageMin: formData.slippageMin,
+        slippageMax: formData.slippageMax,
+        priorityFeeMin: formData.priorityFeeMin,
+        priorityFeeMax: formData.priorityFeeMax,
+      },
+      realism: {
+        walletCount: formData.walletCount,
+        delayMin: formData.delayMin,
+        delayMax: formData.delayMax,
+        buyRatio: formData.buyRatio,
+        sellRatio: 1 - formData.buyRatio,
+        useNoopInstructions: formData.useNoop,
+        microFailChance: formData.microFailChance,
+      },
+    };
+
+    const { data, error: err } = await campaignApi.create(campaignData);
+    
+    if (err) {
+      setError(err);
+      setSubmitting(false);
+      return;
+    }
+
     router.push('/');
   };
 
@@ -401,7 +477,7 @@ export default function NewCampaign() {
           <Button 
             variant="outline" 
             onClick={handleBack}
-            disabled={currentStep === 1}
+            disabled={currentStep === 1 || submitting}
           >
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back
@@ -412,12 +488,23 @@ export default function NewCampaign() {
               <ArrowRight className="h-4 w-4 ml-2" />
             </Button>
           ) : (
-            <Button onClick={handleSubmit} className="bg-green-600 hover:bg-green-700">
-              <Zap className="h-4 w-4 mr-2" />
+            <Button onClick={handleSubmit} className="bg-green-600 hover:bg-green-700" disabled={submitting}>
+              {submitting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Zap className="h-4 w-4 mr-2" />
+              )}
               Launch Campaign
             </Button>
           )}
         </div>
+
+        {error && (
+          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center space-x-2 text-red-700">
+            <AlertCircle className="h-5 w-5" />
+            <span>{error}</span>
+          </div>
+        )}
       </main>
     </div>
   );
