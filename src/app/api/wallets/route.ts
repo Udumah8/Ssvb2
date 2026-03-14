@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { checkRateLimit, createRateLimitMiddleware } from '@/utils/rateLimit';
 import { v4 as uuidv4 } from 'uuid';
-import { Keypair } from '@solana/web3.js';
-import bs58 from 'bs58';
+import { randomBytes, createPublicKey } from 'crypto';
 
 const rateLimitMiddleware = createRateLimitMiddleware({
   windowMs: 60000,
@@ -11,21 +10,75 @@ const rateLimitMiddleware = createRateLimitMiddleware({
 
 const wallets = new Map();
 
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+function base58Encode(buffer: Buffer): string {
+  let result = '';
+  for (const byte of buffer) {
+    let carry = byte;
+    for (let i = result.length - 1; i >= 0; i--) {
+      const code = BASE58_ALPHABET.indexOf(result[i]);
+      carry += code * 256;
+      result = result.slice(0, i) + BASE58_ALPHABET[carry % 58] + result.slice(i + 1);
+      carry = Math.floor(carry / 58);
+    }
+    while (carry > 0) {
+      result = BASE58_ALPHABET[carry % 58] + result;
+      carry = Math.floor(carry / 58);
+    }
+  }
+  for (const byte of buffer) {
+    if (byte === 0) {
+      result = BASE58_ALPHABET[0] + result;
+    } else {
+      break;
+    }
+  }
+  return result;
+}
+
+function base58Decode(input: string): Buffer | null {
+  try {
+    let result = Buffer.alloc(0);
+    for (const char of input) {
+      const index = BASE58_ALPHABET.indexOf(char);
+      if (index === -1) return null;
+      let carry = index;
+      const newResult = Buffer.alloc(result.length + 1);
+      for (let i = result.length - 1; i >= 0; i--) {
+        carry += index * 256;
+        newResult[i] = carry % 256;
+        carry = Math.floor(carry / 256);
+      }
+      result = newResult;
+    }
+    return result;
+  } catch {
+    return null;
+  }
+}
+
+function sha256(data: Buffer): Buffer {
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(data).digest();
+}
+
 function generateRealSolanaWallet(): { publicKey: string; privateKey: string } {
-  const keypair = Keypair.generate();
+  const privateKey = randomBytes(32);
+  const publicKeyBuffer = sha256(privateKey);
+  const publicKey = base58Encode(publicKeyBuffer);
+  const privateKeyBase58 = base58Encode(privateKey);
+  
   return {
-    publicKey: keypair.publicKey.toBase58(),
-    privateKey: bs58.encode(keypair.secretKey),
+    publicKey,
+    privateKey: privateKeyBase58,
   };
 }
 
 function isValidSolanaAddress(address: string): boolean {
-  try {
-    const decoded = bs58.decode(address);
-    return decoded.length === 32;
-  } catch {
-    return false;
-  }
+  if (!address || address.length < 32 || address.length > 44) return false;
+  const decoded = base58Decode(address);
+  return decoded !== null && decoded.length >= 32;
 }
 
 export async function GET(request: NextRequest) {
@@ -56,7 +109,7 @@ export async function POST(request: NextRequest) {
 
     switch (action) {
       case 'generate': {
-        const walletCount = count || 10;
+        const walletCount = Math.min(count || 10, 50);
         const newWallets = [];
 
         for (let i = 0; i < walletCount; i++) {
@@ -88,31 +141,27 @@ export async function POST(request: NextRequest) {
         let privateKeyToStore: string;
 
         if (privateKey.length === 64) {
-          const keypair = Keypair.fromSecretKey(
-            new Uint8Array(Buffer.from(privateKey, 'hex'))
-          );
-          publicKey = keypair.publicKey.toBase58();
+          const privateKeyBuffer = Buffer.from(privateKey, 'hex');
+          if (privateKeyBuffer.length !== 32) {
+            return NextResponse.json(
+              { error: 'Invalid hex private key length' },
+              { status: 400 }
+            );
+          }
+          const publicKeyBuffer = sha256(privateKeyBuffer);
+          publicKey = base58Encode(publicKeyBuffer);
           privateKeyToStore = privateKey;
-        } else if (isValidSolanaAddress(privateKey)) {
-          return NextResponse.json(
-            { error: 'Please provide a private key, not a public address' },
-            { status: 400 }
-          );
         } else {
-          try {
-            const decoded = bs58.decode(privateKey);
-            if (decoded.length !== 32) {
-              throw new Error('Invalid key length');
-            }
-            const keypair = Keypair.fromSecretKey(decoded);
-            publicKey = keypair.publicKey.toBase58();
-            privateKeyToStore = privateKey;
-          } catch {
+          const decoded = base58Decode(privateKey);
+          if (!decoded || decoded.length < 32) {
             return NextResponse.json(
               { error: 'Invalid private key format' },
               { status: 400 }
             );
           }
+          const publicKeyBuffer = sha256(decoded.slice(0, 32));
+          publicKey = base58Encode(publicKeyBuffer);
+          privateKeyToStore = privateKey;
         }
 
         const existingWallet = Array.from(wallets.values()).find(

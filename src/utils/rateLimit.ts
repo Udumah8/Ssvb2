@@ -72,14 +72,3 @@ export function createRateLimitMiddleware(
     return response;
   };
 }
-
-export function cleanupExpiredRecords(): void {
-  const now = Date.now();
-  for (const [ip, record] of rateLimitStore.entries()) {
-    if (record.resetTime < now) {
-      rateLimitStore.delete(ip);
-    }
-  }
-}
-
-setInterval(cleanupExpiredRecords, 60000);
